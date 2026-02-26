@@ -1,0 +1,81 @@
+{
+  "name": "antigravity-bridge-extension",
+  "displayName": "Antigravity Bridge",
+  "description": "HTTP bridge server enabling OpenClaw agents to programmatically control Antigravity (VS Code fork) via REST API.",
+  "version": "0.1.0",
+  "publisher": "Rio2Ryo",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "antigravityBridge.start",
+        "title": "Antigravity Bridge: Start Server"
+      },
+      {
+        "command": "antigravityBridge.stop",
+        "title": "Antigravity Bridge: Stop Server"
+      },
+      {
+        "command": "antigravityBridge.restart",
+        "title": "Antigravity Bridge: Restart Server"
+      },
+      {
+        "command": "antigravityBridge.showStatus",
+        "title": "Antigravity Bridge: Show Status"
+      }
+    ],
+    "configuration": {
+      "title": "Antigravity Bridge",
+      "properties": {
+        "antigravityBridge.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable or disable the Antigravity Bridge HTTP server."
+        },
+        "antigravityBridge.port": {
+          "type": "number",
+          "default": 55678,
+          "description": "Port number for the HTTP server."
+        },
+        "antigravityBridge.host": {
+          "type": "string",
+          "default": "127.0.0.1",
+          "description": "Host address for the HTTP server."
+        },
+        "antigravityBridge.webhookUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Webhook URL to receive file change notifications."
+        },
+        "antigravityBridge.logLevel": {
+          "type": "string",
+          "default": "info",
+          "enum": ["debug", "info", "warn", "error"],
+          "description": "Log level for the output channel."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "npx @vscode/vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.0",
+    "@types/vscode": "^1.74.0",
+    "@vscode/vsce": "^3.2.0",
+    "typescript": "^5.3.0"
+  }
+}

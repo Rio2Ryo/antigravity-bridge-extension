@@ -1,0 +1,186 @@
+import * as http from 'http';
+import * as crypto from 'crypto';
+import { CommandRequest, CommandResponse, ActionType, BridgeConfig } from './types';
+import { logger } from './logger';
+import {
+  handlePing,
+  handleCreateFile,
+  handleReadFile,
+  handleWriteFile,
+  handleDeleteFile,
+  handleOpenFile,
+  handleExecuteTerminal,
+  handleGetWorkspaceFolders,
+} from './commands';
+
+const MAX_PORT_ATTEMPTS = 10;
+
+type ActionHandler = (params: Record<string, unknown>) => Promise<unknown>;
+
+const ACTION_HANDLERS: Record<ActionType, ActionHandler> = {
+  ping: () => handlePing(),
+  createFile: (p) => handleCreateFile(p),
+  readFile: (p) => handleReadFile(p),
+  writeFile: (p) => handleWriteFile(p),
+  deleteFile: (p) => handleDeleteFile(p),
+  openFile: (p) => handleOpenFile(p),
+  executeTerminal: (p) => handleExecuteTerminal(p),
+  getWorkspaceFolders: () => handleGetWorkspaceFolders(),
+};
+
+export class BridgeServer {
+  private server: http.Server | undefined;
+  private _actualPort: number | undefined;
+
+  get actualPort(): number | undefined {
+    return this._actualPort;
+  }
+
+  async start(config: BridgeConfig): Promise<number> {
+    if (this.server) {
+      await this.stop();
+    }
+
+    const port = await this.listen(config.host, config.port);
+    this._actualPort = port;
+    logger.info(`Bridge server listening on ${config.host}:${port}`);
+    return port;
+  }
+
+  async stop(): Promise<void> {
+    return new Promise((resolve) => {
+      if (!this.server) {
+        resolve();
+        return;
+      }
+      this.server.close(() => {
+        this.server = undefined;
+        this._actualPort = undefined;
+        logger.info('Bridge server stopped.');
+        resolve();
+      });
+    });
+  }
+
+  private async listen(host: string, startPort: number): Promise<number> {
+    for (let attempt = 0; attempt < MAX_PORT_ATTEMPTS; attempt++) {
+      const port = startPort + attempt;
+      try {
+        await this.tryListen(host, port);
+        return port;
+      } catch (err: unknown) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === 'EADDRINUSE') {
+          logger.warn(`Port ${port} in use, trying ${port + 1}...`);
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw new Error(`Could not find an available port after ${MAX_PORT_ATTEMPTS} attempts (starting from ${startPort}).`);
+  }
+
+  private tryListen(host: string, port: number): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const srv = http.createServer((req, res) => this.handleRequest(req, res, host));
+      srv.once('error', reject);
+      srv.listen(port, host, () => {
+        srv.removeListener('error', reject);
+        this.server = srv;
+        resolve();
+      });
+    });
+  }
+
+  private handleRequest(req: http.IncomingMessage, res: http.ServerResponse, allowedHost: string): void {
+    // CORS — localhost only by default
+    const origin = req.headers.origin ?? '';
+    const allowed = this.isOriginAllowed(origin, allowedHost);
+
+    if (allowed) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    }
+
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
+    if (req.method !== 'POST' || req.url !== '/api/v1/command') {
+      this.sendJson(res, 404, this.makeResponse('error', null, 'Not found'));
+      return;
+    }
+
+    let body = '';
+    req.on('data', (chunk: Buffer) => {
+      body += chunk.toString();
+      if (body.length > 1_048_576) {
+        this.sendJson(res, 413, this.makeResponse('error', null, 'Request body too large'));
+        req.destroy();
+      }
+    });
+    req.on('end', () => {
+      void this.dispatch(body, res);
+    });
+  }
+
+  private async dispatch(body: string, res: http.ServerResponse): Promise<void> {
+    let parsed: CommandRequest;
+    try {
+      parsed = JSON.parse(body) as CommandRequest;
+    } catch {
+      this.sendJson(res, 400, this.makeResponse('error', null, 'Invalid JSON'));
+      return;
+    }
+
+    const requestId = parsed.requestId ?? crypto.randomUUID();
+    const action = parsed.action;
+
+    if (!action || !(action in ACTION_HANDLERS)) {
+      this.sendJson(res, 400, this.makeResponse('error', null, `Unknown action: ${String(action)}`, requestId));
+      return;
+    }
+
+    logger.debug(`Dispatching action: ${action}`, parsed.params);
+
+    try {
+      const data = await ACTION_HANDLERS[action](parsed.params ?? {});
+      this.sendJson(res, 200, this.makeResponse('success', data, null, requestId));
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error(`Action ${action} failed: ${message}`);
+      this.sendJson(res, 500, this.makeResponse('error', null, message, requestId));
+    }
+  }
+
+  private isOriginAllowed(origin: string, allowedHost: string): boolean {
+    if (!origin) {
+      return true; // non-browser clients (curl, agent SDKs)
+    }
+    try {
+      const url = new URL(origin);
+      return url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === allowedHost;
+    } catch {
+      return false;
+    }
+  }
+
+  private makeResponse(status: 'success' | 'error', data: unknown, error: string | null, requestId?: string): CommandResponse {
+    return {
+      status,
+      data,
+      error,
+      requestId: requestId ?? crypto.randomUUID(),
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  private sendJson(res: http.ServerResponse, statusCode: number, body: CommandResponse): void {
+    const json = JSON.stringify(body);
+    res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+    res.end(json);
+  }
+}
