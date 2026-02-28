@@ -2,7 +2,7 @@
   "name": "antigravity-bridge-extension",
   "displayName": "Antigravity Bridge",
   "description": "HTTP bridge server enabling OpenClaw agents to programmatically control Antigravity (VS Code fork) via REST API.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "Rio2Ryo",
   "license": "MIT",
   "engines": {
@@ -60,7 +60,12 @@
         "antigravityBridge.logLevel": {
           "type": "string",
           "default": "info",
-          "enum": ["debug", "info", "warn", "error"],
+          "enum": [
+            "debug",
+            "info",
+            "warn",
+            "error"
+          ],
           "description": "Log level for the output channel."
         }
       }
@@ -70,12 +75,14 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "package": "npx @vscode/vsce package --no-dependencies"
+    "package": "npx @vscode/vsce package --no-dependencies",
+    "test": "vitest run"
   },
   "devDependencies": {
     "@types/node": "^18.19.0",
     "@types/vscode": "^1.74.0",
     "@vscode/vsce": "^3.2.0",
-    "typescript": "^5.3.0"
+    "typescript": "^5.3.0",
+    "vitest": "^2.1.9"
   }
 }

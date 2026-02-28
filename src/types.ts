@@ -37,3 +37,18 @@ export interface FileChangeEvent {
   uri: string;
   timestamp: string;
 }
+
+export interface TerminalResult {
+  executed: boolean;
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+}
+
+export type SSEEventType = 'file-change' | 'task-complete' | 'connected';
+
+export interface SSEEvent {
+  event: SSEEventType;
+  data: unknown;
+  id?: string;
+}

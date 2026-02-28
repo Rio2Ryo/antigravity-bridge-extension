@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as cp from 'child_process';
 import { logger } from './logger';
+import { TerminalResult } from './types';
 
 const FILE_TIMEOUT = 30_000;
 const TERMINAL_TIMEOUT = 60_000;
@@ -105,28 +107,44 @@ export async function handleOpenFile(params: Record<string, unknown>): Promise<{
   return { path: uri.fsPath };
 }
 
-export async function handleExecuteTerminal(params: Record<string, unknown>): Promise<{ executed: boolean }> {
+export async function handleExecuteTerminal(params: Record<string, unknown>): Promise<TerminalResult> {
   const command = String(params.command ?? '');
   const cwd = params.cwd ? String(params.cwd) : undefined;
+  const timeoutMs = typeof params.timeout === 'number' ? params.timeout : TERMINAL_TIMEOUT;
   if (!command) {
     throw new Error('Missing required parameter: command');
   }
 
-  return withTimeout(
-    new Promise<{ executed: boolean }>((resolve) => {
-      const terminal = vscode.window.createTerminal({
-        name: 'Antigravity Bridge',
-        cwd,
-      });
-      terminal.show(false);
-      terminal.sendText(command, true);
-      logger.info(`Executed terminal command: ${command}`);
-      // Terminal commands are fire-and-forget in VS Code API
-      resolve({ executed: true });
-    }),
-    TERMINAL_TIMEOUT,
-    'executeTerminal',
-  );
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const execCwd = cwd ?? workspaceRoot ?? process.cwd();
+
+  logger.info(`Executing command: ${command} (cwd: ${execCwd})`);
+
+  return new Promise<TerminalResult>((resolve, reject) => {
+    const child = cp.exec(
+      command,
+      {
+        cwd: execCwd,
+        timeout: timeoutMs,
+        maxBuffer: 10 * 1024 * 1024, // 10MB
+        env: { ...process.env },
+      },
+      (error, stdout, stderr) => {
+        const exitCode = error ? (error as cp.ExecException).code ?? 1 : 0;
+        logger.info(`Command finished (exit ${exitCode}): ${command}`);
+        resolve({
+          executed: true,
+          exitCode: typeof exitCode === 'number' ? exitCode : 1,
+          stdout: stdout ?? '',
+          stderr: stderr ?? '',
+        });
+      },
+    );
+
+    child.on('error', (err) => {
+      reject(new Error(`Failed to execute command: ${err.message}`));
+    });
+  });
 }
 
 export async function handleGetWorkspaceFolders(): Promise<{ folders: Array<{ name: string; uri: string }> }> {

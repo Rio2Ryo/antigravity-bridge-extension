@@ -1,7 +1,8 @@
 import * as http from 'http';
 import * as crypto from 'crypto';
-import { CommandRequest, CommandResponse, ActionType, BridgeConfig } from './types';
+import { CommandRequest, CommandResponse, ActionType, BridgeConfig, SSEEvent } from './types';
 import { logger } from './logger';
+import { eventBus } from './eventBus';
 import {
   handlePing,
   handleCreateFile,
@@ -31,6 +32,7 @@ const ACTION_HANDLERS: Record<ActionType, ActionHandler> = {
 export class BridgeServer {
   private server: http.Server | undefined;
   private _actualPort: number | undefined;
+  private sseClients: Set<http.ServerResponse> = new Set();
 
   get actualPort(): number | undefined {
     return this._actualPort;
@@ -41,6 +43,9 @@ export class BridgeServer {
       await this.stop();
     }
 
+    // Listen for SSE events from the bus
+    eventBus.on('sse', (event: SSEEvent) => this.broadcastSSE(event));
+
     const port = await this.listen(config.host, config.port);
     this._actualPort = port;
     logger.info(`Bridge server listening on ${config.host}:${port}`);
@@ -48,6 +53,13 @@ export class BridgeServer {
   }
 
   async stop(): Promise<void> {
+    eventBus.removeAllListeners('sse');
+    // Close all SSE connections
+    for (const client of this.sseClients) {
+      client.end();
+    }
+    this.sseClients.clear();
+
     return new Promise((resolve) => {
       if (!this.server) {
         resolve();
@@ -99,13 +111,19 @@ export class BridgeServer {
 
     if (allowed) {
       res.setHeader('Access-Control-Allow-Origin', origin);
-      res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     }
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204);
       res.end();
+      return;
+    }
+
+    // SSE endpoint
+    if (req.method === 'GET' && req.url === '/api/v1/events') {
+      this.handleSSE(req, res);
       return;
     }
 
@@ -125,6 +143,43 @@ export class BridgeServer {
     req.on('end', () => {
       void this.dispatch(body, res);
     });
+  }
+
+  private handleSSE(req: http.IncomingMessage, res: http.ServerResponse): void {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    });
+
+    // Send connected event
+    this.writeSSE(res, {
+      event: 'connected',
+      data: { message: 'SSE stream established', timestamp: new Date().toISOString() },
+      id: '0',
+    });
+
+    this.sseClients.add(res);
+    logger.info(`SSE client connected (total: ${this.sseClients.size})`);
+
+    req.on('close', () => {
+      this.sseClients.delete(res);
+      logger.info(`SSE client disconnected (total: ${this.sseClients.size})`);
+    });
+  }
+
+  private broadcastSSE(event: SSEEvent): void {
+    for (const client of this.sseClients) {
+      this.writeSSE(client, event);
+    }
+  }
+
+  private writeSSE(res: http.ServerResponse, event: SSEEvent): void {
+    if (event.id) {
+      res.write(`id: ${event.id}\n`);
+    }
+    res.write(`event: ${event.event}\n`);
+    res.write(`data: ${JSON.stringify(event.data)}\n\n`);
   }
 
   private async dispatch(body: string, res: http.ServerResponse): Promise<void> {
@@ -149,10 +204,26 @@ export class BridgeServer {
     try {
       const data = await ACTION_HANDLERS[action](parsed.params ?? {});
       this.sendJson(res, 200, this.makeResponse('success', data, null, requestId));
+
+      // Emit task-complete event for SSE subscribers
+      eventBus.publish('task-complete', {
+        action,
+        requestId,
+        status: 'success',
+        timestamp: new Date().toISOString(),
+      });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       logger.error(`Action ${action} failed: ${message}`);
       this.sendJson(res, 500, this.makeResponse('error', null, message, requestId));
+
+      eventBus.publish('task-complete', {
+        action,
+        requestId,
+        status: 'error',
+        error: message,
+        timestamp: new Date().toISOString(),
+      });
     }
   }
 
