@@ -30,10 +30,21 @@ Add to your `settings.json`:
   "antigravityBridge.enabled": true,       // enable/disable server
   "antigravityBridge.port": 55678,         // starting port (auto-increments on conflict)
   "antigravityBridge.host": "127.0.0.1",   // bind address
+  "antigravityBridge.authToken": "",        // bearer token for API auth (recommended)
   "antigravityBridge.webhookUrl": "",       // URL to POST file-change events
   "antigravityBridge.logLevel": "info"      // debug | info | warn | error
 }
 ```
+
+## Authentication
+
+When `antigravityBridge.authToken` is set, all API requests (except `GET /api/v1/health`) require a `Bearer` token:
+
+```bash
+curl -H "Authorization: Bearer YOUR_TOKEN" ...
+```
+
+If the token is empty (default), auth is disabled.
 
 ## API
 
@@ -70,8 +81,9 @@ Add to your `settings.json`:
 | `readFile` | `path` | Read file contents. Returns `{ path, content }`. |
 | `writeFile` | `path`, `content` | Overwrite file contents. |
 | `deleteFile` | `path` | Delete a file. |
+| `listFiles` | `path` | List directory contents. Returns `{ path, entries: [{ name, type }] }`. |
 | `openFile` | `path`, `preview?` | Open file in editor. `preview` defaults to `true`. |
-| `executeTerminal` | `command`, `cwd?` | Run a shell command in an integrated terminal. |
+| `executeTerminal` | `command`, `cwd?`, `timeout?` | Run a shell command and capture output. Returns `{ executed, exitCode, stdout, stderr }`. |
 | `getWorkspaceFolders` | — | List open workspace folders. |
 
 ### Examples
@@ -93,9 +105,31 @@ curl -X POST http://localhost:55678/api/v1/command \
   -d '{"action":"executeTerminal","params":{"command":"npm test"}}'
 ```
 
+### Additional Endpoints
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/api/v1/health` | No | Health check. Returns `{ status, version, uptime, sseClients }`. |
+| `GET` | `/api/v1/events` | Yes | SSE stream. Emits `connected`, `file-change`, and `task-complete` events. |
+| `POST` | `/api/v1/command` | Yes | Execute an action (see Actions table above). |
+
+## SSE Events
+
+Connect to `GET /api/v1/events` to receive real-time events:
+
+```bash
+curl -N -H "Authorization: Bearer YOUR_TOKEN" http://localhost:55678/api/v1/events
+```
+
+| Event | Description |
+|---|---|
+| `connected` | Sent on stream open. |
+| `file-change` | Workspace file created/changed/deleted. |
+| `task-complete` | Emitted after every command dispatch (success or error). |
+
 ## File Watcher
 
-When `antigravityBridge.webhookUrl` is set, the extension watches the workspace for file changes and sends `POST` notifications:
+When `antigravityBridge.webhookUrl` is set, the extension watches the workspace for file changes and sends `POST` notifications (in addition to SSE events):
 
 ```json
 {

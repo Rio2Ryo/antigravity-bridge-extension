@@ -147,6 +147,25 @@ export async function handleExecuteTerminal(params: Record<string, unknown>): Pr
   });
 }
 
+export async function handleListFiles(params: Record<string, unknown>): Promise<{ path: string; entries: Array<{ name: string; type: 'file' | 'directory' }> }> {
+  const dirPath = String(params.path ?? '');
+  if (!dirPath) {
+    throw new Error('Missing required parameter: path');
+  }
+  const uri = resolveUri(dirPath);
+  const result = await withTimeout(
+    vscode.workspace.fs.readDirectory(uri),
+    FILE_TIMEOUT,
+    'listFiles',
+  );
+  const entries = result.map(([name, fileType]) => ({
+    name,
+    type: (fileType === vscode.FileType.Directory ? 'directory' : 'file') as 'file' | 'directory',
+  }));
+  logger.info(`Listed ${entries.length} entries in: ${uri.fsPath}`);
+  return { path: uri.fsPath, entries };
+}
+
 export async function handleGetWorkspaceFolders(): Promise<{ folders: Array<{ name: string; uri: string }> }> {
   const folders = vscode.workspace.workspaceFolders ?? [];
   const result = folders.map((f) => ({ name: f.name, uri: f.uri.fsPath }));

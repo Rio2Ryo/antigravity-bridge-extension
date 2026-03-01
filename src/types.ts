@@ -6,6 +6,7 @@ export type ActionType =
   | 'readFile'
   | 'writeFile'
   | 'deleteFile'
+  | 'listFiles'
   | 'openFile'
   | 'executeTerminal'
   | 'getWorkspaceFolders';
@@ -30,6 +31,7 @@ export interface BridgeConfig {
   host: string;
   webhookUrl: string;
   logLevel: LogLevel;
+  authToken: string;
 }
 
 export interface FileChangeEvent {

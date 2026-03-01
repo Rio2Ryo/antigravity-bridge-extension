@@ -9,6 +9,7 @@ import {
   handleReadFile,
   handleWriteFile,
   handleDeleteFile,
+  handleListFiles,
   handleOpenFile,
   handleExecuteTerminal,
   handleGetWorkspaceFolders,
@@ -24,6 +25,7 @@ const ACTION_HANDLERS: Record<ActionType, ActionHandler> = {
   readFile: (p) => handleReadFile(p),
   writeFile: (p) => handleWriteFile(p),
   deleteFile: (p) => handleDeleteFile(p),
+  listFiles: (p) => handleListFiles(p),
   openFile: (p) => handleOpenFile(p),
   executeTerminal: (p) => handleExecuteTerminal(p),
   getWorkspaceFolders: () => handleGetWorkspaceFolders(),
@@ -33,6 +35,7 @@ export class BridgeServer {
   private server: http.Server | undefined;
   private _actualPort: number | undefined;
   private sseClients: Set<http.ServerResponse> = new Set();
+  private authToken: string = '';
 
   get actualPort(): number | undefined {
     return this._actualPort;
@@ -42,6 +45,8 @@ export class BridgeServer {
     if (this.server) {
       await this.stop();
     }
+
+    this.authToken = config.authToken ?? '';
 
     // Listen for SSE events from the bus
     eventBus.on('sse', (event: SSEEvent) => this.broadcastSSE(event));
@@ -118,6 +123,23 @@ export class BridgeServer {
     if (req.method === 'OPTIONS') {
       res.writeHead(204);
       res.end();
+      return;
+    }
+
+    // Health endpoint (no auth required)
+    if (req.method === 'GET' && req.url === '/api/v1/health') {
+      this.sendJson(res, 200, this.makeResponse('success', {
+        status: 'healthy',
+        version: '0.3.0',
+        uptime: process.uptime(),
+        sseClients: this.sseClients.size,
+      }, null));
+      return;
+    }
+
+    // Auth check (skip if no token configured)
+    if (this.authToken && !this.checkAuth(req)) {
+      this.sendJson(res, 401, this.makeResponse('error', null, 'Unauthorized: invalid or missing Bearer token'));
       return;
     }
 
@@ -225,6 +247,14 @@ export class BridgeServer {
         timestamp: new Date().toISOString(),
       });
     }
+  }
+
+  private checkAuth(req: http.IncomingMessage): boolean {
+    const authHeader = req.headers.authorization ?? '';
+    if (authHeader.startsWith('Bearer ')) {
+      return authHeader.slice(7) === this.authToken;
+    }
+    return false;
   }
 
   private isOriginAllowed(origin: string, allowedHost: string): boolean {

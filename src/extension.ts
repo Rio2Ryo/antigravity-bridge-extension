@@ -15,6 +15,7 @@ function getConfig(): BridgeConfig {
     host: cfg.get<string>('host', '127.0.0.1'),
     webhookUrl: cfg.get<string>('webhookUrl', ''),
     logLevel: cfg.get<'debug' | 'info' | 'warn' | 'error'>('logLevel', 'info'),
+    authToken: cfg.get<string>('authToken', ''),
   };
 }
 
