@@ -85,6 +85,7 @@ If the token is empty (default), auth is disabled.
 | `openFile` | `path`, `preview?` | Open file in editor. `preview` defaults to `true`. |
 | `executeTerminal` | `command`, `cwd?`, `timeout?` | Run a shell command and capture output. Returns `{ executed, exitCode, stdout, stderr }`. |
 | `searchInFiles` | `query`, `path?`, `include?`, `exclude?`, `maxResults?`, `regex?`, `caseSensitive?` | Search for text/regex across workspace files. Returns `{ query, path, matches: [{ file, line, column, text }], totalMatches }`. |
+| `getDiagnostics` | `path?`, `severity?` | Get Language Server diagnostics (errors, warnings). Optional `severity` filter: `error`, `warning`, `information`, `hint`. Returns `{ diagnostics: [{ file, range, message, severity, source, code }], totalCount, errorCount, warningCount, informationCount, hintCount }`. |
 | `getWorkspaceFolders` | — | List open workspace folders. |
 
 ### Examples
@@ -114,6 +115,16 @@ curl -X POST http://localhost:55678/api/v1/command \
 curl -X POST http://localhost:55678/api/v1/command \
   -H 'Content-Type: application/json' \
   -d '{"action":"searchInFiles","params":{"query":"function\\s+\\w+","regex":true,"caseSensitive":false}}'
+
+# Get all diagnostics (errors + warnings)
+curl -X POST http://localhost:55678/api/v1/command \
+  -H 'Content-Type: application/json' \
+  -d '{"action":"getDiagnostics"}'
+
+# Get errors only for a specific file
+curl -X POST http://localhost:55678/api/v1/command \
+  -H 'Content-Type: application/json' \
+  -d '{"action":"getDiagnostics","params":{"path":"src/server.ts","severity":"error"}}'
 ```
 
 ### Additional Endpoints

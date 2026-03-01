@@ -10,7 +10,8 @@ export type ActionType =
   | 'openFile'
   | 'executeTerminal'
   | 'getWorkspaceFolders'
-  | 'searchInFiles';
+  | 'searchInFiles'
+  | 'getDiagnostics';
 
 export interface CommandRequest {
   action: ActionType;
@@ -60,6 +61,31 @@ export interface SearchResult {
   path: string;
   matches: SearchMatch[];
   totalMatches: number;
+}
+
+export type DiagnosticSeverityName = 'error' | 'warning' | 'information' | 'hint';
+
+export interface DiagnosticItem {
+  file: string;
+  range: {
+    startLine: number;
+    startColumn: number;
+    endLine: number;
+    endColumn: number;
+  };
+  message: string;
+  severity: DiagnosticSeverityName;
+  source: string;
+  code: string;
+}
+
+export interface DiagnosticsResult {
+  diagnostics: DiagnosticItem[];
+  totalCount: number;
+  errorCount: number;
+  warningCount: number;
+  informationCount: number;
+  hintCount: number;
 }
 
 export type SSEEventType = 'file-change' | 'task-complete' | 'connected';

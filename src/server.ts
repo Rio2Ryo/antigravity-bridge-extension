@@ -14,6 +14,7 @@ import {
   handleExecuteTerminal,
   handleGetWorkspaceFolders,
   handleSearchInFiles,
+  handleGetDiagnostics,
 } from './commands';
 
 const MAX_PORT_ATTEMPTS = 10;
@@ -31,6 +32,7 @@ const ACTION_HANDLERS: Record<ActionType, ActionHandler> = {
   executeTerminal: (p) => handleExecuteTerminal(p),
   getWorkspaceFolders: () => handleGetWorkspaceFolders(),
   searchInFiles: (p) => handleSearchInFiles(p),
+  getDiagnostics: (p) => handleGetDiagnostics(p),
 };
 
 export class BridgeServer {

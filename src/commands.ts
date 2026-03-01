@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as cp from 'child_process';
 import { logger } from './logger';
-import { TerminalResult, SearchMatch, SearchResult } from './types';
+import { TerminalResult, SearchMatch, SearchResult, DiagnosticItem, DiagnosticSeverityName, DiagnosticsResult } from './types';
 
 const FILE_TIMEOUT = 30_000;
 const TERMINAL_TIMEOUT = 60_000;
@@ -235,6 +235,66 @@ export async function handleSearchInFiles(params: Record<string, unknown>): Prom
       resolve({ query, path: targetPath, matches, totalMatches: matches.length });
     });
   });
+}
+
+export async function handleGetDiagnostics(params: Record<string, unknown>): Promise<DiagnosticsResult> {
+  const filePath = params.path ? String(params.path) : undefined;
+  const severityFilter = params.severity ? String(params.severity) as DiagnosticSeverityName : undefined;
+
+  let allDiagnostics: [vscode.Uri, vscode.Diagnostic[]][];
+
+  if (filePath) {
+    const uri = resolveUri(filePath);
+    const diags = vscode.languages.getDiagnostics(uri);
+    allDiagnostics = [[uri, diags]];
+  } else {
+    allDiagnostics = vscode.languages.getDiagnostics() as [vscode.Uri, vscode.Diagnostic[]][];
+  }
+
+  const severityMap: Record<number, DiagnosticSeverityName> = {
+    [vscode.DiagnosticSeverity.Error]: 'error',
+    [vscode.DiagnosticSeverity.Warning]: 'warning',
+    [vscode.DiagnosticSeverity.Information]: 'information',
+    [vscode.DiagnosticSeverity.Hint]: 'hint',
+  };
+
+  const items: DiagnosticItem[] = [];
+  for (const [uri, diags] of allDiagnostics) {
+    for (const d of diags) {
+      const sev = severityMap[d.severity] ?? 'information';
+      if (severityFilter && sev !== severityFilter) { continue; }
+
+      let codeStr = '';
+      if (d.code !== undefined && d.code !== null) {
+        codeStr = typeof d.code === 'object' ? String((d.code as { value: string | number }).value) : String(d.code);
+      }
+
+      items.push({
+        file: uri.fsPath,
+        range: {
+          startLine: d.range.start.line + 1,
+          startColumn: d.range.start.character,
+          endLine: d.range.end.line + 1,
+          endColumn: d.range.end.character,
+        },
+        message: d.message,
+        severity: sev,
+        source: d.source ?? '',
+        code: codeStr,
+      });
+    }
+  }
+
+  logger.info(`getDiagnostics: ${items.length} diagnostics${filePath ? ` for ${filePath}` : ''}`);
+
+  return {
+    diagnostics: items,
+    totalCount: items.length,
+    errorCount: items.filter((d) => d.severity === 'error').length,
+    warningCount: items.filter((d) => d.severity === 'warning').length,
+    informationCount: items.filter((d) => d.severity === 'information').length,
+    hintCount: items.filter((d) => d.severity === 'hint').length,
+  };
 }
 
 export async function handleGetWorkspaceFolders(): Promise<{ folders: Array<{ name: string; uri: string }> }> {

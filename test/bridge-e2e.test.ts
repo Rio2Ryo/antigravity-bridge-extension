@@ -118,6 +118,69 @@ async function handleAction(action: string, params: Record<string, unknown>): Pr
       }
     }
 
+    case 'getDiagnostics': {
+      const filePath = params.path ? String(params.path) : undefined;
+      const severityFilter = params.severity ? String(params.severity) : undefined;
+      const diagnostics: Array<{
+        file: string;
+        range: { startLine: number; startColumn: number; endLine: number; endColumn: number };
+        message: string;
+        severity: string;
+        source: string;
+        code: string;
+      }> = [];
+
+      function scanFileForDiags(fullPath: string) {
+        try {
+          const content = fs.readFileSync(fullPath, 'utf-8');
+          const lines = content.split('\n');
+          for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            const marker = line.match(/\/\/\s*@(error|warning|information|hint)\s+(.*)/i);
+            if (marker) {
+              diagnostics.push({
+                file: fullPath,
+                range: { startLine: i + 1, startColumn: 0, endLine: i + 1, endColumn: line.length },
+                message: marker[2].trim(),
+                severity: marker[1].toLowerCase(),
+                source: 'test-linter',
+                code: '',
+              });
+            }
+          }
+        } catch { /* skip */ }
+      }
+
+      function walkForDiags(dir: string) {
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          const full = path.join(dir, entry.name);
+          if (entry.isDirectory()) { walkForDiags(full); }
+          else if (entry.isFile()) { scanFileForDiags(full); }
+        }
+      }
+
+      if (filePath) {
+        const resolved = path.isAbsolute(filePath) ? filePath : path.join(tmpDir, filePath);
+        scanFileForDiags(resolved);
+      } else {
+        walkForDiags(tmpDir);
+      }
+
+      const filtered = severityFilter
+        ? diagnostics.filter(d => d.severity === severityFilter)
+        : diagnostics;
+
+      return {
+        diagnostics: filtered,
+        totalCount: filtered.length,
+        errorCount: filtered.filter(d => d.severity === 'error').length,
+        warningCount: filtered.filter(d => d.severity === 'warning').length,
+        informationCount: filtered.filter(d => d.severity === 'information').length,
+        hintCount: filtered.filter(d => d.severity === 'hint').length,
+      };
+    }
+
     case 'searchInFiles': {
       const query = String(params.query ?? '');
       if (!query) throw new Error('Missing required parameter: query');
@@ -542,6 +605,71 @@ describe('Antigravity Bridge E2E', () => {
     const res = await post('ping', {}, undefined, 'wrong-token');
     expect(res.status).toBe('error');
     expect(res.error).toContain('Unauthorized');
+  });
+
+  // -----------------------------------------------------------------------
+  // getDiagnostics
+  // -----------------------------------------------------------------------
+  it('getDiagnostics returns diagnostics from files with markers', async () => {
+    fs.writeFileSync(path.join(tmpDir, 'bad.ts'), [
+      'const x = 1;',
+      '// @error Unexpected token',
+      'const y = 2;',
+      '// @warning Unused variable',
+    ].join('\n'));
+
+    const res = await post('getDiagnostics', { path: path.join(tmpDir, 'bad.ts') });
+    expect(res.status).toBe('success');
+    const data = res.data as {
+      diagnostics: Array<{ file: string; message: string; severity: string; range: { startLine: number } }>;
+      totalCount: number; errorCount: number; warningCount: number;
+    };
+    expect(data.totalCount).toBe(2);
+    expect(data.errorCount).toBe(1);
+    expect(data.warningCount).toBe(1);
+    expect(data.diagnostics[0].message).toBe('Unexpected token');
+    expect(data.diagnostics[0].severity).toBe('error');
+    expect(data.diagnostics[0].range.startLine).toBe(2);
+    expect(data.diagnostics[1].severity).toBe('warning');
+  });
+
+  it('getDiagnostics filters by severity', async () => {
+    fs.writeFileSync(path.join(tmpDir, 'mixed.ts'), [
+      '// @error Critical error',
+      '// @warning Minor warning',
+      '// @information Just info',
+      '// @hint Consider this',
+    ].join('\n'));
+
+    const res = await post('getDiagnostics', { path: path.join(tmpDir, 'mixed.ts'), severity: 'error' });
+    expect(res.status).toBe('success');
+    const data = res.data as { totalCount: number; diagnostics: Array<{ severity: string }> };
+    expect(data.totalCount).toBe(1);
+    expect(data.diagnostics[0].severity).toBe('error');
+  });
+
+  it('getDiagnostics returns empty for clean file', async () => {
+    fs.writeFileSync(path.join(tmpDir, 'clean.ts'), 'const x = 1;\nconst y = 2;\n');
+
+    const res = await post('getDiagnostics', { path: path.join(tmpDir, 'clean.ts') });
+    expect(res.status).toBe('success');
+    const data = res.data as { totalCount: number; diagnostics: unknown[] };
+    expect(data.totalCount).toBe(0);
+    expect(data.diagnostics).toEqual([]);
+  });
+
+  it('getDiagnostics scans all files when no path given', async () => {
+    fs.writeFileSync(path.join(tmpDir, 'a.ts'), '// @error Error in A\n');
+    fs.writeFileSync(path.join(tmpDir, 'b.ts'), '// @warning Warning in B\n');
+    fs.mkdirSync(path.join(tmpDir, 'sub'));
+    fs.writeFileSync(path.join(tmpDir, 'sub', 'c.ts'), '// @error Error in C\n');
+
+    const res = await post('getDiagnostics', {});
+    expect(res.status).toBe('success');
+    const data = res.data as { totalCount: number; errorCount: number; warningCount: number };
+    expect(data.totalCount).toBe(3);
+    expect(data.errorCount).toBe(2);
+    expect(data.warningCount).toBe(1);
   });
 
   // -----------------------------------------------------------------------
