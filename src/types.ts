@@ -9,7 +9,8 @@ export type ActionType =
   | 'listFiles'
   | 'openFile'
   | 'executeTerminal'
-  | 'getWorkspaceFolders';
+  | 'getWorkspaceFolders'
+  | 'searchInFiles';
 
 export interface CommandRequest {
   action: ActionType;
@@ -45,6 +46,20 @@ export interface TerminalResult {
   exitCode: number | null;
   stdout: string;
   stderr: string;
+}
+
+export interface SearchMatch {
+  file: string;
+  line: number;
+  column: number;
+  text: string;
+}
+
+export interface SearchResult {
+  query: string;
+  path: string;
+  matches: SearchMatch[];
+  totalMatches: number;
 }
 
 export type SSEEventType = 'file-change' | 'task-complete' | 'connected';

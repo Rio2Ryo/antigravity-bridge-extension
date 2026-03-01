@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as cp from 'child_process';
 import { logger } from './logger';
-import { TerminalResult } from './types';
+import { TerminalResult, SearchMatch, SearchResult } from './types';
 
 const FILE_TIMEOUT = 30_000;
 const TERMINAL_TIMEOUT = 60_000;
@@ -164,6 +164,77 @@ export async function handleListFiles(params: Record<string, unknown>): Promise<
   }));
   logger.info(`Listed ${entries.length} entries in: ${uri.fsPath}`);
   return { path: uri.fsPath, entries };
+}
+
+export async function handleSearchInFiles(params: Record<string, unknown>): Promise<SearchResult> {
+  const query = String(params.query ?? '');
+  if (!query) {
+    throw new Error('Missing required parameter: query');
+  }
+
+  const searchPath = params.path ? String(params.path) : undefined;
+  const include = params.include ? String(params.include) : undefined;
+  const exclude = params.exclude ? String(params.exclude) : undefined;
+  const maxResults = typeof params.maxResults === 'number' ? params.maxResults : 100;
+  const isRegex = params.regex === true;
+  const caseSensitive = params.caseSensitive !== false;
+
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!searchPath && !workspaceRoot) {
+    throw new Error('No workspace folder open. Use the path parameter or open a workspace first.');
+  }
+  const targetPath = searchPath
+    ? (path.isAbsolute(searchPath) ? searchPath : path.join(workspaceRoot ?? process.cwd(), searchPath))
+    : workspaceRoot!;
+
+  const grepArgs: string[] = ['-rn'];
+  if (!caseSensitive) { grepArgs.push('-i'); }
+  if (isRegex) { grepArgs.push('-E'); } else { grepArgs.push('-F'); }
+
+  // Default directory exclusions
+  for (const dir of ['node_modules', '.git', 'dist', 'out', '.next']) {
+    grepArgs.push(`--exclude-dir=${dir}`);
+  }
+  if (include) { grepArgs.push(`--include=${include}`); }
+  if (exclude) { grepArgs.push(`--exclude-dir=${exclude}`); }
+
+  grepArgs.push('--', query, targetPath);
+
+  return new Promise<SearchResult>((resolve, reject) => {
+    cp.execFile('grep', grepArgs, {
+      maxBuffer: 10 * 1024 * 1024,
+      timeout: 30_000,
+    }, (error, stdout) => {
+      // grep exit code 1 = no matches (OK), 2+ = real error
+      if (error && typeof (error as cp.ExecException).code === 'number' && ((error as cp.ExecException).code as number) >= 2) {
+        reject(new Error(`Search failed: ${error.message}`));
+        return;
+      }
+
+      const matches: SearchMatch[] = [];
+      if (stdout) {
+        const lines = stdout.split('\n');
+        for (const line of lines) {
+          if (!line || matches.length >= maxResults) { break; }
+          const m = line.match(/^(.+?):(\d+):(.*)$/);
+          if (m) {
+            const [, file, lineStr, text] = m;
+            let col = 0;
+            if (!isRegex) {
+              const idx = caseSensitive
+                ? text.indexOf(query)
+                : text.toLowerCase().indexOf(query.toLowerCase());
+              col = Math.max(idx, 0);
+            }
+            matches.push({ file, line: parseInt(lineStr, 10), column: col, text: text.trim() });
+          }
+        }
+      }
+
+      logger.info(`searchInFiles: "${query}" in ${targetPath} → ${matches.length} matches`);
+      resolve({ query, path: targetPath, matches, totalMatches: matches.length });
+    });
+  });
 }
 
 export async function handleGetWorkspaceFolders(): Promise<{ folders: Array<{ name: string; uri: string }> }> {

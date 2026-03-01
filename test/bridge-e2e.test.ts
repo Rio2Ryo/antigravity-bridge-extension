@@ -118,6 +118,54 @@ async function handleAction(action: string, params: Record<string, unknown>): Pr
       }
     }
 
+    case 'searchInFiles': {
+      const query = String(params.query ?? '');
+      if (!query) throw new Error('Missing required parameter: query');
+      const searchPath = params.path ? String(params.path) : tmpDir;
+      const resolved = path.isAbsolute(searchPath) ? searchPath : path.join(tmpDir, searchPath);
+      const maxResults = typeof params.maxResults === 'number' ? params.maxResults : 100;
+      const isRegex = params.regex === true;
+      const caseSensitive = params.caseSensitive !== false;
+      const matches: Array<{ file: string; line: number; column: number; text: string }> = [];
+
+      function walk(dir: string) {
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (matches.length >= maxResults) return;
+          const full = path.join(dir, entry.name);
+          if (entry.isDirectory()) {
+            if (entry.name === 'node_modules' || entry.name === '.git') continue;
+            walk(full);
+          } else if (entry.isFile()) {
+            try {
+              const content = fs.readFileSync(full, 'utf-8');
+              const lines = content.split('\n');
+              for (let i = 0; i < lines.length; i++) {
+                if (matches.length >= maxResults) return;
+                const lineText = lines[i];
+                let idx = -1;
+                if (isRegex) {
+                  const re = new RegExp(query, caseSensitive ? '' : 'i');
+                  const m = re.exec(lineText);
+                  idx = m ? m.index : -1;
+                } else {
+                  idx = caseSensitive
+                    ? lineText.indexOf(query)
+                    : lineText.toLowerCase().indexOf(query.toLowerCase());
+                }
+                if (idx !== -1) {
+                  matches.push({ file: full, line: i + 1, column: idx, text: lineText.trim() });
+                }
+              }
+            } catch { /* skip unreadable files */ }
+          }
+        }
+      }
+
+      walk(resolved);
+      return { query, path: resolved, matches, totalMatches: matches.length };
+    }
+
     default:
       throw new Error(`Unknown action: ${action}`);
   }
@@ -494,6 +542,62 @@ describe('Antigravity Bridge E2E', () => {
     const res = await post('ping', {}, undefined, 'wrong-token');
     expect(res.status).toBe('error');
     expect(res.error).toContain('Unauthorized');
+  });
+
+  // -----------------------------------------------------------------------
+  // searchInFiles
+  // -----------------------------------------------------------------------
+  it('searchInFiles finds text across multiple files', async () => {
+    fs.writeFileSync(path.join(tmpDir, 'foo.ts'), 'const hello = "world";\nconst bar = 42;\n');
+    fs.writeFileSync(path.join(tmpDir, 'bar.ts'), 'function hello() {}\n');
+    fs.mkdirSync(path.join(tmpDir, 'sub'));
+    fs.writeFileSync(path.join(tmpDir, 'sub', 'deep.ts'), 'let hello = true;\n');
+
+    const res = await post('searchInFiles', { query: 'hello', path: tmpDir });
+    expect(res.status).toBe('success');
+    const data = res.data as { query: string; path: string; matches: Array<{ file: string; line: number; column: number; text: string }>; totalMatches: number };
+    expect(data.query).toBe('hello');
+    expect(data.totalMatches).toBe(3);
+    expect(data.matches.length).toBe(3);
+    for (const m of data.matches) {
+      expect(m.text).toContain('hello');
+      expect(m.line).toBeGreaterThan(0);
+      expect(m.column).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it('searchInFiles case-insensitive search', async () => {
+    fs.writeFileSync(path.join(tmpDir, 'mixed.txt'), 'Hello World\nhello world\nHELLO WORLD\n');
+
+    const res = await post('searchInFiles', { query: 'hello', path: tmpDir, caseSensitive: false });
+    expect(res.status).toBe('success');
+    const data = res.data as { totalMatches: number };
+    expect(data.totalMatches).toBe(3);
+  });
+
+  it('searchInFiles with regex pattern', async () => {
+    fs.writeFileSync(path.join(tmpDir, 'regex.ts'), 'const foo = 123;\nconst bar = 456;\nlet baz = 789;\n');
+
+    const res = await post('searchInFiles', { query: 'const \\w+ = \\d+', path: tmpDir, regex: true });
+    expect(res.status).toBe('success');
+    const data = res.data as { totalMatches: number; matches: Array<{ text: string }> };
+    expect(data.totalMatches).toBe(2);
+  });
+
+  it('searchInFiles returns empty for no matches', async () => {
+    fs.writeFileSync(path.join(tmpDir, 'empty.txt'), 'nothing here\n');
+
+    const res = await post('searchInFiles', { query: 'zzz_not_found_zzz', path: tmpDir });
+    expect(res.status).toBe('success');
+    const data = res.data as { totalMatches: number; matches: unknown[] };
+    expect(data.totalMatches).toBe(0);
+    expect(data.matches).toEqual([]);
+  });
+
+  it('searchInFiles fails without query', async () => {
+    const res = await post('searchInFiles', {});
+    expect(res.status).toBe('error');
+    expect(res.error).toContain('Missing required parameter: query');
   });
 
   // -----------------------------------------------------------------------

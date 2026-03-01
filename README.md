@@ -84,6 +84,7 @@ If the token is empty (default), auth is disabled.
 | `listFiles` | `path` | List directory contents. Returns `{ path, entries: [{ name, type }] }`. |
 | `openFile` | `path`, `preview?` | Open file in editor. `preview` defaults to `true`. |
 | `executeTerminal` | `command`, `cwd?`, `timeout?` | Run a shell command and capture output. Returns `{ executed, exitCode, stdout, stderr }`. |
+| `searchInFiles` | `query`, `path?`, `include?`, `exclude?`, `maxResults?`, `regex?`, `caseSensitive?` | Search for text/regex across workspace files. Returns `{ query, path, matches: [{ file, line, column, text }], totalMatches }`. |
 | `getWorkspaceFolders` | — | List open workspace folders. |
 
 ### Examples
@@ -103,6 +104,16 @@ curl -X POST http://localhost:55678/api/v1/command \
 curl -X POST http://localhost:55678/api/v1/command \
   -H 'Content-Type: application/json' \
   -d '{"action":"executeTerminal","params":{"command":"npm test"}}'
+
+# Search for text in workspace files
+curl -X POST http://localhost:55678/api/v1/command \
+  -H 'Content-Type: application/json' \
+  -d '{"action":"searchInFiles","params":{"query":"TODO","include":"*.ts","maxResults":50}}'
+
+# Regex search (case-insensitive)
+curl -X POST http://localhost:55678/api/v1/command \
+  -H 'Content-Type: application/json' \
+  -d '{"action":"searchInFiles","params":{"query":"function\\s+\\w+","regex":true,"caseSensitive":false}}'
 ```
 
 ### Additional Endpoints
