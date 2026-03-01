@@ -11,7 +11,9 @@ export type ActionType =
   | 'executeTerminal'
   | 'getWorkspaceFolders'
   | 'searchInFiles'
-  | 'getDiagnostics';
+  | 'getDiagnostics'
+  | 'getActiveEditor'
+  | 'getOpenEditors';
 
 export interface CommandRequest {
   action: ActionType;
@@ -86,6 +88,32 @@ export interface DiagnosticsResult {
   warningCount: number;
   informationCount: number;
   hintCount: number;
+}
+
+export interface EditorInfo {
+  file: string;
+  languageId: string;
+  lineCount: number;
+  isDirty: boolean;
+  selection: {
+    startLine: number;
+    startColumn: number;
+    endLine: number;
+    endColumn: number;
+    isEmpty: boolean;
+  };
+  visibleRange: {
+    startLine: number;
+    endLine: number;
+  };
+}
+
+export interface EditorTabInfo {
+  file: string;
+  isActive: boolean;
+  isDirty: boolean;
+  label: string;
+  groupIndex: number;
 }
 
 export type SSEEventType = 'file-change' | 'task-complete' | 'connected';

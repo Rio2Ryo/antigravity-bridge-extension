@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as cp from 'child_process';
 import { logger } from './logger';
-import { TerminalResult, SearchMatch, SearchResult, DiagnosticItem, DiagnosticSeverityName, DiagnosticsResult } from './types';
+import { TerminalResult, SearchMatch, SearchResult, DiagnosticItem, DiagnosticSeverityName, DiagnosticsResult, EditorInfo, EditorTabInfo } from './types';
 
 const FILE_TIMEOUT = 30_000;
 const TERMINAL_TIMEOUT = 60_000;
@@ -295,6 +295,63 @@ export async function handleGetDiagnostics(params: Record<string, unknown>): Pro
     informationCount: items.filter((d) => d.severity === 'information').length,
     hintCount: items.filter((d) => d.severity === 'hint').length,
   };
+}
+
+export async function handleGetActiveEditor(): Promise<{ editor: EditorInfo | null }> {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) {
+    logger.info('getActiveEditor: no active editor');
+    return { editor: null };
+  }
+
+  const doc = editor.document;
+  const sel = editor.selection;
+  const visRange = editor.visibleRanges[0];
+
+  const info: EditorInfo = {
+    file: doc.uri.fsPath,
+    languageId: doc.languageId,
+    lineCount: doc.lineCount,
+    isDirty: doc.isDirty,
+    selection: {
+      startLine: sel.start.line + 1,
+      startColumn: sel.start.character,
+      endLine: sel.end.line + 1,
+      endColumn: sel.end.character,
+      isEmpty: sel.isEmpty,
+    },
+    visibleRange: {
+      startLine: visRange ? visRange.start.line + 1 : 1,
+      endLine: visRange ? visRange.end.line + 1 : doc.lineCount,
+    },
+  };
+
+  logger.info(`getActiveEditor: ${doc.uri.fsPath} (${doc.languageId}, ${doc.lineCount} lines)`);
+  return { editor: info };
+}
+
+export async function handleGetOpenEditors(): Promise<{ editors: EditorTabInfo[] }> {
+  const editors: EditorTabInfo[] = [];
+
+  for (const [groupIndex, group] of vscode.window.tabGroups.all.entries()) {
+    for (const tab of group.tabs) {
+      const input = tab.input;
+      // Only include text-based tabs (TabInputText has a uri property)
+      if (input && typeof input === 'object' && 'uri' in input) {
+        const uri = (input as { uri: vscode.Uri }).uri;
+        editors.push({
+          file: uri.fsPath,
+          isActive: tab.isActive,
+          isDirty: tab.isDirty,
+          label: tab.label,
+          groupIndex,
+        });
+      }
+    }
+  }
+
+  logger.info(`getOpenEditors: ${editors.length} editors open`);
+  return { editors };
 }
 
 export async function handleGetWorkspaceFolders(): Promise<{ folders: Array<{ name: string; uri: string }> }> {

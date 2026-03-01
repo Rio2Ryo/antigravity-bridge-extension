@@ -86,6 +86,8 @@ If the token is empty (default), auth is disabled.
 | `executeTerminal` | `command`, `cwd?`, `timeout?` | Run a shell command and capture output. Returns `{ executed, exitCode, stdout, stderr }`. |
 | `searchInFiles` | `query`, `path?`, `include?`, `exclude?`, `maxResults?`, `regex?`, `caseSensitive?` | Search for text/regex across workspace files. Returns `{ query, path, matches: [{ file, line, column, text }], totalMatches }`. |
 | `getDiagnostics` | `path?`, `severity?` | Get Language Server diagnostics (errors, warnings). Optional `severity` filter: `error`, `warning`, `information`, `hint`. Returns `{ diagnostics: [{ file, range, message, severity, source, code }], totalCount, errorCount, warningCount, informationCount, hintCount }`. |
+| `getActiveEditor` | — | Get the currently active editor. Returns `{ editor: { file, languageId, lineCount, isDirty, selection, visibleRange } }` or `{ editor: null }`. |
+| `getOpenEditors` | — | List all open editor tabs. Returns `{ editors: [{ file, isActive, isDirty, label, groupIndex }] }`. |
 | `getWorkspaceFolders` | — | List open workspace folders. |
 
 ### Examples
@@ -125,6 +127,16 @@ curl -X POST http://localhost:55678/api/v1/command \
 curl -X POST http://localhost:55678/api/v1/command \
   -H 'Content-Type: application/json' \
   -d '{"action":"getDiagnostics","params":{"path":"src/server.ts","severity":"error"}}'
+
+# Get active editor info
+curl -X POST http://localhost:55678/api/v1/command \
+  -H 'Content-Type: application/json' \
+  -d '{"action":"getActiveEditor"}'
+
+# List all open editor tabs
+curl -X POST http://localhost:55678/api/v1/command \
+  -H 'Content-Type: application/json' \
+  -d '{"action":"getOpenEditors"}'
 ```
 
 ### Additional Endpoints

@@ -37,6 +37,12 @@ let server: http.Server;
 let port: number;
 let tmpDir: string;
 
+// Mock editor state for getActiveEditor / getOpenEditors tests
+const mockEditorState = {
+  activeFile: null as string | null,
+  openFiles: [] as Array<{ file: string; isDirty: boolean; label: string }>,
+};
+
 function makeResponse(
   status: 'success' | 'error',
   data: unknown,
@@ -64,6 +70,12 @@ async function handleAction(action: string, params: Record<string, unknown>): Pr
       const resolved = path.isAbsolute(filePath) ? filePath : path.join(tmpDir, filePath);
       fs.mkdirSync(path.dirname(resolved), { recursive: true });
       fs.writeFileSync(resolved, content, 'utf-8');
+      // Track in mock editor state
+      const label = path.basename(resolved);
+      mockEditorState.activeFile = resolved;
+      if (!mockEditorState.openFiles.find(e => e.file === resolved)) {
+        mockEditorState.openFiles.push({ file: resolved, isDirty: false, label });
+      }
       return { path: resolved };
     }
 
@@ -116,6 +128,42 @@ async function handleAction(action: string, params: Record<string, unknown>): Pr
         const e = err as { status?: number; stdout?: string; stderr?: string };
         return { executed: true, exitCode: e.status ?? 1, stdout: e.stdout ?? '', stderr: e.stderr ?? '' };
       }
+    }
+
+    case 'getActiveEditor': {
+      if (!mockEditorState.activeFile) {
+        return { editor: null };
+      }
+      const activeFile = mockEditorState.activeFile;
+      try {
+        const content = fs.readFileSync(activeFile, 'utf-8');
+        const lines = content.split('\n');
+        const ext = path.extname(activeFile).slice(1);
+        const langMap: Record<string, string> = { ts: 'typescript', js: 'javascript', json: 'json', md: 'markdown', txt: 'plaintext' };
+        return {
+          editor: {
+            file: activeFile,
+            languageId: langMap[ext] ?? 'plaintext',
+            lineCount: lines.length,
+            isDirty: false,
+            selection: { startLine: 1, startColumn: 0, endLine: 1, endColumn: 0, isEmpty: true },
+            visibleRange: { startLine: 1, endLine: Math.min(lines.length, 50) },
+          },
+        };
+      } catch {
+        return { editor: null };
+      }
+    }
+
+    case 'getOpenEditors': {
+      const editors = mockEditorState.openFiles.map((entry, idx) => ({
+        file: entry.file,
+        isActive: entry.file === mockEditorState.activeFile,
+        isDirty: entry.isDirty,
+        label: entry.label,
+        groupIndex: 0,
+      }));
+      return { editors };
     }
 
     case 'getDiagnostics': {
@@ -363,6 +411,8 @@ afterAll(() => {
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agbridge-test-'));
+  mockEditorState.activeFile = null;
+  mockEditorState.openFiles = [];
 });
 
 afterEach(() => {
@@ -670,6 +720,66 @@ describe('Antigravity Bridge E2E', () => {
     expect(data.totalCount).toBe(3);
     expect(data.errorCount).toBe(2);
     expect(data.warningCount).toBe(1);
+  });
+
+  // -----------------------------------------------------------------------
+  // getActiveEditor
+  // -----------------------------------------------------------------------
+  it('getActiveEditor returns null when no editor is active', async () => {
+    const res = await post('getActiveEditor');
+    expect(res.status).toBe('success');
+    const data = res.data as { editor: null };
+    expect(data.editor).toBeNull();
+  });
+
+  it('getActiveEditor returns editor info after creating a file', async () => {
+    const filePath = path.join(tmpDir, 'active.ts');
+    await post('createFile', { path: filePath, content: 'const x = 1;\nconst y = 2;\n' });
+
+    const res = await post('getActiveEditor');
+    expect(res.status).toBe('success');
+    const data = res.data as { editor: { file: string; languageId: string; lineCount: number; isDirty: boolean; selection: { isEmpty: boolean }; visibleRange: { startLine: number } } };
+    expect(data.editor).not.toBeNull();
+    expect(data.editor.file).toBe(filePath);
+    expect(data.editor.languageId).toBe('typescript');
+    expect(data.editor.lineCount).toBeGreaterThan(0);
+    expect(data.editor.isDirty).toBe(false);
+    expect(data.editor.selection.isEmpty).toBe(true);
+    expect(data.editor.visibleRange.startLine).toBe(1);
+  });
+
+  // -----------------------------------------------------------------------
+  // getOpenEditors
+  // -----------------------------------------------------------------------
+  it('getOpenEditors returns empty list when no files opened', async () => {
+    const res = await post('getOpenEditors');
+    expect(res.status).toBe('success');
+    const data = res.data as { editors: unknown[] };
+    expect(data.editors).toEqual([]);
+  });
+
+  it('getOpenEditors returns all open editors after creating files', async () => {
+    await post('createFile', { path: path.join(tmpDir, 'one.ts'), content: 'a' });
+    await post('createFile', { path: path.join(tmpDir, 'two.ts'), content: 'b' });
+    await post('createFile', { path: path.join(tmpDir, 'three.js'), content: 'c' });
+
+    const res = await post('getOpenEditors');
+    expect(res.status).toBe('success');
+    const data = res.data as { editors: Array<{ file: string; isActive: boolean; isDirty: boolean; label: string; groupIndex: number }> };
+    expect(data.editors.length).toBe(3);
+
+    const labels = data.editors.map(e => e.label).sort();
+    expect(labels).toEqual(['one.ts', 'three.js', 'two.ts']);
+
+    // Last created file should be active
+    const active = data.editors.filter(e => e.isActive);
+    expect(active.length).toBe(1);
+    expect(active[0].label).toBe('three.js');
+
+    for (const e of data.editors) {
+      expect(e.groupIndex).toBe(0);
+      expect(typeof e.isDirty).toBe('boolean');
+    }
   });
 
   // -----------------------------------------------------------------------
